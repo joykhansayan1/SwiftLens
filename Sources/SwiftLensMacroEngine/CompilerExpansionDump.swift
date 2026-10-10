@@ -92,6 +92,7 @@ public enum CompilerExpansionDump {
     public static func run(
         files: [String],
         toolchain: Toolchain,
+        moduleName: String? = nil,
         extraArguments: [String] = [],
         timeout: Double = 120
     ) throws -> (expansions: [CompilerExpansion], diagnostics: String) {
@@ -100,6 +101,8 @@ public enum CompilerExpansionDump {
         }
         var arguments = ["-typecheck", "-Xfrontend", "-dump-macro-expansions"]
         if let sdk = toolchain.sdkPath { arguments += ["-sdk", sdk] }
+        // Must match the module name SwiftLens reports to macros, or `#fileID`-based expansions differ.
+        if let moduleName { arguments += ["-module-name", moduleName] }
         arguments += extraArguments + files
 
         let process = Process()

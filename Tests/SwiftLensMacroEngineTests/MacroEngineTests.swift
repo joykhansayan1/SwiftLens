@@ -197,7 +197,7 @@ final class ToolchainMacroTests: XCTestCase {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let file = directory.appendingPathComponent("obs.swift")
         try source.write(to: file, atomically: true, encoding: .utf8)
-        let compiler = try CompilerExpansionDump.run(files: [file.path], toolchain: toolchain)
+        let compiler = try CompilerExpansionDump.run(files: [file.path], toolchain: toolchain, moduleName: MacroExpansionOptions().moduleName)
         XCTAssertFalse(compiler.expansions.isEmpty, compiler.diagnostics)
         let problems = CompilerExpansionDump.verify(report: report, against: compiler.expansions)
         XCTAssertEqual(problems, [], "\nSwiftLens:\n\(report.expansions.map { "\($0.spelling) \($0.role): \($0.expandedSource)" }.joined(separator: "\n---\n"))\nCompiler:\n\(compiler.expansions.map { "\($0.macroName ?? "?") \(String(describing: $0.role)): \($0.expandedSource)" }.joined(separator: "\n---\n"))")

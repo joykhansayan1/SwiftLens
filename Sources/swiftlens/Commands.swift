@@ -149,7 +149,7 @@ struct Expand: ParsableCommand {
             var arguments = swiftcArguments
             for plugin in pluginOptions.plugins { arguments += ["-load-plugin-executable", plugin] }
             for directory in pluginOptions.pluginPaths { arguments += ["-plugin-path", directory] }
-            let compiler = try CompilerExpansionDump.run(files: [path], toolchain: toolchain, extraArguments: arguments)
+            let compiler = try CompilerExpansionDump.run(files: [path], toolchain: toolchain, moduleName: moduleName, extraArguments: arguments)
             let problems = CompilerExpansionDump.verify(report: report, against: compiler.expansions)
             if problems.isEmpty {
                 FileHandle.standardError.write(Data((Terminal.green("✓ verified: ") + "\(compiler.expansions.count) compiler expansion(s) match\n").utf8))
