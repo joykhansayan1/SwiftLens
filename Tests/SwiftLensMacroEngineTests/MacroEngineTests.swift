@@ -203,3 +203,52 @@ final class ToolchainMacroTests: XCTestCase {
         XCTAssertEqual(problems, [], "\nSwiftLens:\n\(report.expansions.map { "\($0.spelling) \($0.role): \($0.expandedSource)" }.joined(separator: "\n---\n"))\nCompiler:\n\(compiler.expansions.map { "\($0.macroName ?? "?") \(String(describing: $0.role)): \($0.expandedSource)" }.joined(separator: "\n---\n"))")
     }
 }
+
+final class MacroLabTests: XCTestCase {
+    let implementation = """
+    import SwiftSyntax
+    import SwiftSyntaxMacros
+    public struct StringifyMacro: ExpressionMacro {
+        public static func expansion(of node: some FreestandingMacroExpansionSyntax, in context: some MacroExpansionContext) -> ExprSyntax {
+            "(\\(node.arguments.first!.expression), \\(literal: node.arguments.first!.expression.description))"
+        }
+    }
+    struct AddIDMacro: MemberMacro, PeerMacro {}
+    struct NotAMacro: Equatable {}
+    """
+
+    func testDiscoversMacroTypesAndNames() {
+        let types = MacroLab.discoverMacroTypes(in: implementation)
+        XCTAssertEqual(types.map(\.typeName), ["StringifyMacro", "AddIDMacro"])
+        XCTAssertEqual(types.map(\.suggestedName), ["stringify", "AddID"])
+        XCTAssertEqual(types[1].roles, [.member, .peer])
+    }
+
+    func testSynthesizedDeclarationsAreScannable() {
+        let declarations = MacroLab.synthesizedDeclarations(for: MacroLab.discoverMacroTypes(in: implementation))
+        let definitions = MacroDeclarationScanner.scan(source: declarations, origin: "lab")
+        XCTAssertEqual(definitions.map(\.name), ["stringify", "AddID"])
+        XCTAssertEqual(definitions[1].roles, [.member, .peer])
+        XCTAssertEqual(definitions[0].moduleName, MacroLab.pluginModule)
+    }
+
+    func testPrepareWritesPackage() throws {
+        let workspace = FileManager.default.temporaryDirectory.appendingPathComponent("swiftlens-lab-\(UUID().uuidString)")
+        let lab = MacroLab(workspace: workspace, swiftPath: "/usr/bin/swift", swiftSyntaxDependency: ".package(path: \"/x\")")
+        _ = try lab.prepare(implementation: implementation)
+        let entry = try String(contentsOf: workspace.appendingPathComponent("Sources/LabMacros/SwiftLensLabPlugin.swift"), encoding: .utf8)
+        XCTAssertTrue(entry.contains("[StringifyMacro.self, AddIDMacro.self]"))
+        let manifest = try String(contentsOf: workspace.appendingPathComponent("Package.swift"), encoding: .utf8)
+        XCTAssertTrue(manifest.contains(".package(path: \"/x\")"))
+    }
+
+    /// Builds a real plugin (compiles swift-syntax the first time). Opt in with SWIFTLENS_SLOW_TESTS=1.
+    func testBuildAndExpandEndToEnd() throws {
+        guard ProcessInfo.processInfo.environment["SWIFTLENS_SLOW_TESTS"] == "1" else { throw XCTSkip("Set SWIFTLENS_SLOW_TESTS=1") }
+        let toolchain = try XCTUnwrap(Toolchain.detect())
+        let lab = MacroLab(swiftPath: try XCTUnwrap(toolchain.swiftPath))
+        let (build, report) = lab.run(implementation: implementation.replacingOccurrences(of: "struct AddIDMacro: MemberMacro, PeerMacro {}", with: ""), usage: "let pair = #stringify(40 + 2)")
+        XCTAssertTrue(build.succeeded, build.log)
+        XCTAssertEqual(report?.expandedSource, "let pair = (40 + 2, \"40 + 2\")")
+    }
+}

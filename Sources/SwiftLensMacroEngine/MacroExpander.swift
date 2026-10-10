@@ -137,6 +137,10 @@ public final class MacroExpander {
         }
 
         var expandedText = expanded.description
+        // An attribute that is the very first token leaves the following newline behind.
+        if !document.text.hasPrefix("\n"), expandedText.hasPrefix("\n") {
+            expandedText = String(expandedText.drop(while: { $0 == "\n" }))
+        }
         var records = session.records
         if options.readableUniqueNames {
             let prettifier = UniqueNamePrettifier()

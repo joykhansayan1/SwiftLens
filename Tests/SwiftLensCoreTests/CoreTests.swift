@@ -132,3 +132,22 @@ final class TextDiffTests: XCTestCase {
         }
     }
 }
+
+final class SyntaxHighlighterTests: XCTestCase {
+    func testClassifiesTokens() {
+        let text = "// hi\n@Observable final class A { let s = \"é\"; let n = 1 }"
+        let tokens = SyntaxHighlighter.highlight(text)
+        func kinds(_ substring: String) -> [HighlightToken.Kind] {
+            let range = (text as NSString).range(of: substring)
+            return tokens.filter { $0.utf16Offset == range.location && $0.utf16Length == range.length }.map(\.kind)
+        }
+        XCTAssertEqual(kinds("// hi"), [.comment])
+        XCTAssertEqual(kinds("@Observable").isEmpty && kinds("Observable").isEmpty, false)
+        XCTAssertEqual(kinds("class"), [.keyword])
+        XCTAssertEqual(kinds("\"é\""), [.string])
+        XCTAssertEqual(kinds("1"), [.number])
+        // UTF-16 offsets account for the 2-byte "é".
+        let number = tokens.first { $0.kind == .number }!
+        XCTAssertEqual(number.utf8Offset - number.utf16Offset, 1)
+    }
+}
