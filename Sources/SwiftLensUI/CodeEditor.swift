@@ -10,6 +10,7 @@ enum Theme {
         switch kind {
         case .keyword: .systemPink
         case .type: .systemTeal
+        case .identifier: .labelColor
         case .string: .systemRed
         case .number: .systemPurple
         case .comment: .secondaryLabelColor
