@@ -181,6 +181,13 @@ final class ToolchainMacroTests: XCTestCase {
         XCTAssertTrue(report.expandedSource.contains("access(keyPath: \\.count)"), report.expandedSource)
         XCTAssertFalse(report.hasErrors, "\(report.diagnostics)")
 
+        // Positions: user-written uses map to their lines; generated ones are flagged as nested.
+        let positioned = expander.expand(source: source.replacingOccurrences(of: "    var count = 0", with: "    var count = 0\n    @ObservationIgnored var cache = 1"), fileName: "obs.swift")
+        let ignored = positioned.expansions.filter { $0.macroName == "ObservationIgnored" }
+        XCTAssertEqual(ignored.first { $0.attachedTo == "variable cache" }?.position?.line, 6)
+        XCTAssertTrue(ignored.filter { $0.attachedTo != "variable cache" }.allSatisfy { $0.isNested })
+        XCTAssertTrue(positioned.expansions.filter { $0.macroName == "Observable" }.allSatisfy { $0.position?.line == 3 })
+
         // Without the import the macro is not visible.
         let unimported = expander.expand(source: "@Observable final class C { var x = 0 }")
         XCTAssertTrue(unimported.expansions.isEmpty)

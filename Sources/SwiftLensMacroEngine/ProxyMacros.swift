@@ -147,9 +147,11 @@ enum ExpansionParsing {
         let wrapped = "struct __SwiftLensWrapper {\n\(source)\n}"
         let file = Parser.parse(source: wrapped)
         guard let wrapper = file.statements.first?.item.as(StructDeclSyntax.self) else { return [] }
-        return wrapper.memberBlock.members.map { member in
+        // Only the first declaration loses its leading newlines: MacroSystem positions it, but the separation
+        // between the following ones must be kept (expansions are spliced without re-formatting).
+        return wrapper.memberBlock.members.enumerated().map { index, member in
             var decl = member.decl
-            decl.leadingTrivia = decl.leadingTrivia.droppingLeadingNewlines()
+            if index == 0 { decl.leadingTrivia = decl.leadingTrivia.droppingLeadingNewlines() }
             return decl
         }
     }
@@ -165,7 +167,11 @@ enum ExpansionParsing {
     }
 
     static func codeItems(_ source: String) -> [CodeBlockItemSyntax] {
-        Array(Parser.parse(source: source).statements)
+        Parser.parse(source: source).statements.enumerated().map { index, item in
+            var item = item
+            if index == 0 { item.leadingTrivia = item.leadingTrivia.droppingLeadingNewlines() }
+            return item
+        }
     }
 
     static func bodyItems(_ source: String) -> [CodeBlockItemSyntax] {
@@ -188,7 +194,11 @@ enum ExpansionParsing {
         else { return [] }
         switch accessorBlock.accessors {
         case .accessors(let list):
-            return Array(list)
+            return list.enumerated().map { index, accessor in
+                var accessor = accessor
+                if index == 0 { accessor.leadingTrivia = Trivia(pieces: accessor.leadingTrivia.pieces.filter { !$0.isNewline }) }
+                return accessor
+            }
         case .getter(let items):
             return [AccessorDeclSyntax(accessorSpecifier: .keyword(.get), body: CodeBlockSyntax(statements: items))]
         }
@@ -198,6 +208,24 @@ enum ExpansionParsing {
         let file = Parser.parse(source: "\(source) var __swiftLensAttributes: Int")
         guard let variable = file.statements.first?.item.as(VariableDeclSyntax.self) else { return [] }
         return variable.attributes.compactMap { $0.as(AttributeSyntax.self)?.trimmed }
+    }
+}
+
+/// Splits `.newlines(n)` into `n` separate `.newlines(1)` pieces (same text). swift-syntax's attribute remover
+/// keeps the trivia *before the last newline piece*, so a blank line written as one `.newlines(2)` piece would
+/// otherwise be dropped together with the macro attribute.
+final class NewlineTriviaSplitter: SyntaxRewriter {
+    override func visit(_ token: TokenSyntax) -> TokenSyntax {
+        guard token.leadingTrivia.pieces.contains(where: { if case .newlines(let n) = $0 { return n > 1 }; return false }) else { return token }
+        var pieces: [TriviaPiece] = []
+        for piece in token.leadingTrivia.pieces {
+            if case .newlines(let n) = piece, n > 1 {
+                pieces += Array(repeating: .newlines(1), count: n)
+            } else {
+                pieces.append(piece)
+            }
+        }
+        return token.with(\.leadingTrivia, Trivia(pieces: pieces))
     }
 }
 

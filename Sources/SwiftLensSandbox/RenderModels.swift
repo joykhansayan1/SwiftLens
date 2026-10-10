@@ -49,6 +49,12 @@ public struct DevicePreset: Codable, Hashable, Sendable, Identifiable {
     public var width: Double
     public var height: Double
 
+    public init(name: String, width: Double, height: Double) {
+        self.name = name
+        self.width = width
+        self.height = height
+    }
+
     public static let all: [DevicePreset] = [
         .init(name: "iPhone SE", width: 375, height: 667),
         .init(name: "iPhone 16", width: 393, height: 852),

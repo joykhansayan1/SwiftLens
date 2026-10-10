@@ -121,11 +121,13 @@ public final class MacroExpander {
         }
 
         let session = ExpansionSession(document: document, registry: registry, available: available, host: host, options: options)
+        // Same text, different trivia layout (see `NewlineTriviaSplitter`).
+        let prepared = NewlineTriviaSplitter(viewMode: .all).rewrite(document.tree).cast(SourceFileSyntax.self)
         let baseContext = BasicMacroExpansionContext(
-            sourceFiles: [document.tree: .init(moduleName: options.moduleName, fullFilePath: document.fileName)]
+            sourceFiles: [prepared: .init(moduleName: options.moduleName, fullFilePath: document.fileName)]
         )
         let expanded: Syntax = ExpansionSession.$current.withValue(session) {
-            document.tree.expand(
+            prepared.expand(
                 macroSpecs: specs,
                 contextGenerator: { node in
                     BasicMacroExpansionContext(sharingWith: baseContext, lexicalContext: node.allMacroLexicalContexts())
@@ -259,22 +261,65 @@ final class ExpansionSession {
         "\(options.moduleName)/\((document.fileName as NSString).lastPathComponent)"
     }
 
-    /// Location of `node` in the original file, or `nil` when the node lives in generated code.
-    private func originalLocation(of node: some SyntaxProtocol, in context: some MacroExpansionContext) -> SourcePosition? {
-        guard let basic = context as? BasicMacroExpansionContext,
-              basic.location(of: node, at: .beforeLeadingTrivia, filePathMode: .filePath) != nil
-        else { return nil }
-        let location = basic.location(for: node.position, anchoredAt: Syntax(node), fileName: document.fileName)
-        return SourcePosition(line: location.line, column: location.column, offset: location.offset)
+    private lazy var usages: [MacroUsage] = MacroUsageScanner.scan(document)
+    private var consumedFreestanding: Set<Int> = []
+    private lazy var utf8 = Array(document.text.utf8)
+
+    private func text(at offset: Int, length: Int) -> String? {
+        guard offset >= 0, offset + length <= utf8.count else { return nil }
+        return String(decoding: utf8[offset..<(offset + length)], as: UTF8.self)
     }
 
-    private func wireSyntax(_ node: some SyntaxProtocol, kind: PluginWire.Syntax.Kind, context: some MacroExpansionContext) -> PluginWire.Syntax {
-        let position = originalLocation(of: node, in: context) ?? SourcePosition(line: 1, column: 1, offset: 0)
+    /// Location (start of the trimmed node) of `node` in the original file, or `nil` when the node only exists in
+    /// generated code.
+    ///
+    /// MacroSystem hands macros detached copies, sometimes taken from a partially rewritten tree, so the location
+    /// reported by the context is validated against the original text and otherwise recovered from the scanned
+    /// macro uses (disambiguated by the declaration they are attached to).
+    func originalLocation(of node: some SyntaxProtocol, in context: some MacroExpansionContext, attachedToHint: String? = nil) -> SourcePosition? {
+        let trimmed = node.trimmedDescription
+        let length = trimmed.utf8.count
+        if let basic = context as? BasicMacroExpansionContext,
+           basic.location(of: node, at: .afterLeadingTrivia, filePathMode: .filePath) != nil {
+            let location = basic.location(for: node.positionAfterSkippingLeadingTrivia, anchoredAt: Syntax(node), fileName: document.fileName)
+            if text(at: location.offset, length: length) == trimmed {
+                let position = SourcePosition(line: location.line, column: location.column, offset: location.offset)
+                let isAttributeOnOtherDeclaration = node.is(AttributeSyntax.self) && attachedToHint != nil &&
+                    usages.contains { $0.span.start == position && $0.attachedTo?.name != attachedToHint }
+                if !isAttributeOnOtherDeclaration { return position }
+            }
+        }
+        let isAttribute = node.is(AttributeSyntax.self)
+        let candidates = usages.filter { usage in
+            (usage.kind == .attached) == isAttribute &&
+                text(at: usage.span.start.offset, length: usage.span.length) == trimmed
+        }
+        if isAttribute {
+            // The same attribute text may appear on generated declarations (e.g. `@ObservationIgnored` on `_count`),
+            // so require the attached declaration to match when we know it.
+            guard let attachedToHint else { return candidates.first?.span.start }
+            return candidates.first { $0.attachedTo?.name == attachedToHint }?.span.start
+        }
+        guard let chosen = candidates.first(where: { !consumedFreestanding.contains($0.id) }) ?? candidates.first else { return nil }
+        consumedFreestanding.insert(chosen.id)
+        return chosen.span.start
+    }
+
+    private func wireSyntax(_ node: some SyntaxProtocol, kind: PluginWire.Syntax.Kind, at position: SourcePosition?) -> PluginWire.Syntax {
+        let position = position ?? SourcePosition(line: 1, column: 1, offset: 0)
         return PluginWire.Syntax(
             kind: kind,
-            source: node.description,
+            source: node.trimmedDescription,
             location: .init(fileID: fileID, fileName: document.fileName, offset: position.offset, line: position.line, column: position.column)
         )
+    }
+
+    /// Location of a declaration in the original file, found through the macro use attached to it.
+    private func declarationLocation(of declaration: some SyntaxProtocol, attribute: SourcePosition?) -> SourcePosition? {
+        guard let attribute else { return nil }
+        guard let usage = usages.first(where: { $0.span.start == attribute }), let span = usage.attachedTo?.span else { return nil }
+        let trimmed = declaration.trimmedDescription
+        return text(at: span.start.offset, length: trimmed.utf8.count) == trimmed ? span.start : nil
     }
 
     private func lexicalContext(_ context: some MacroExpansionContext) -> [PluginWire.Syntax] {
@@ -305,14 +350,15 @@ final class ExpansionSession {
             role: role
         )
         let kind: PluginWire.Syntax.Kind = node.is(MacroExpansionExprSyntax.self) ? .expression : .declaration
+        let position = originalLocation(of: node, in: context)
         let message = HostToPluginMessage.expandFreestandingMacro(
             macro: .init(moduleName: definition.moduleName, typeName: definition.typeName, name: name),
             macroRole: PluginWire.MacroRole(rawValue: role.rawValue),
             discriminator: nextDiscriminator(role),
-            syntax: wireSyntax(node, kind: kind, context: context),
+            syntax: wireSyntax(node, kind: kind, at: position),
             lexicalContext: lexicalContext(context)
         )
-        return try perform(message, definition: definition, role: role, spelling: "#" + name, node: Syntax(node), attachedTo: nil, context: context)
+        return try perform(message, definition: definition, role: role, spelling: "#" + name, position: position, attachedTo: nil)
     }
 
     func expandAttached(
@@ -346,20 +392,22 @@ final class ExpansionSession {
         }
 
         let wireRole: PluginWire.MacroRole = PluginWire.MacroRole(rawValue: role.rawValue) ?? .peer
+        let target = parent ?? Syntax(declaration)
+        let position = originalLocation(of: attribute, in: context, attachedToHint: SyntaxTreeBuilder.summary(of: target))
+        let declarationPosition = declarationLocation(of: target, attribute: position)
         let message = HostToPluginMessage.expandAttachedMacro(
             macro: .init(moduleName: definition.moduleName, typeName: definition.typeName, name: name),
             macroRole: wireRole,
             discriminator: nextDiscriminator(role),
-            attributeSyntax: wireSyntax(attribute, kind: .attribute, context: context),
-            declSyntax: wireSyntax(declaration, kind: declaration.is(AccessorDeclSyntax.self) ? .accessor : .declaration, context: context),
-            parentDeclSyntax: parent.map { wireSyntax($0, kind: .declaration, context: context) },
-            extendedTypeSyntax: extendedType.map { wireSyntax($0, kind: .type, context: context) },
+            attributeSyntax: wireSyntax(attribute, kind: .attribute, at: position),
+            declSyntax: wireSyntax(declaration, kind: declaration.is(AccessorDeclSyntax.self) ? .accessor : .declaration, at: parent == nil ? declarationPosition : nil),
+            parentDeclSyntax: parent.map { wireSyntax($0, kind: .declaration, at: declarationPosition) },
+            extendedTypeSyntax: extendedType.map { wireSyntax($0, kind: .type, at: nil) },
             conformanceListSyntax: conformanceList,
             lexicalContext: lexicalContext(context)
         )
-        let target = parent ?? Syntax(declaration)
         let summary = MacroUsageScanner.describeDeclaration(target)
-        return try perform(message, definition: definition, role: role, spelling: "@" + name, node: Syntax(attribute), attachedTo: summary, context: context)
+        return try perform(message, definition: definition, role: role, spelling: "@" + name, position: position, attachedTo: summary)
     }
 
     private func perform(
@@ -367,12 +415,10 @@ final class ExpansionSession {
         definition: MacroDefinition,
         role: MacroDefinition.Role,
         spelling: String,
-        node: Syntax,
-        attachedTo: String?,
-        context: some MacroExpansionContext
+        position: SourcePosition?,
+        attachedTo: String?
     ) throws -> String {
         let started = DispatchTime.now()
-        let position = originalLocation(of: node, in: context)
         let isNested = position == nil
 
         func fail(_ text: String) -> Error {
