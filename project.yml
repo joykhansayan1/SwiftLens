@@ -1,0 +1,62 @@
+# XcodeGen spec for the SwiftLens app + Xcode Source Editor Extension.
+#   brew install xcodegen && xcodegen && open SwiftLens.xcodeproj
+# The SwiftPM package (CLI, libraries, tests) does not need this; it exists because Xcode extensions
+# must be embedded in an app bundle, which SwiftPM cannot produce.
+name: SwiftLens
+options:
+  bundleIdPrefix: dev.swiftlens
+  deploymentTarget:
+    macOS: "13.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_VERSION: "5.0"
+    ENABLE_HARDENED_RUNTIME: YES
+    CODE_SIGN_STYLE: Automatic
+packages:
+  SwiftLens:
+    path: .
+targets:
+  SwiftLens:
+    type: application
+    platform: macOS
+    sources:
+      - path: Sources/SwiftLensApp
+    info:
+      path: App/Info.plist
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.swiftlens.app
+        PRODUCT_NAME: SwiftLens
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: App/Info.plist
+        CODE_SIGN_ENTITLEMENTS: App/SwiftLens.entitlements
+        # Not sandboxed: SwiftLens launches swiftc, swift-plugin-server and your macro plugins.
+        ENABLE_APP_SANDBOX: NO
+    dependencies:
+      - package: SwiftLens
+        product: SwiftLensUI
+      - package: SwiftLens
+        product: SwiftLensRenderer
+      - target: SwiftLensXcodeExtension
+        embed: true
+        codeSign: true
+  SwiftLensXcodeExtension:
+    type: xcode-extension
+    platform: macOS
+    sources:
+      - path: Extension/SwiftLensXcodeExtension
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.swiftlens.app.XcodeExtension
+        PRODUCT_NAME: SwiftLensXcodeExtension
+        INFOPLIST_FILE: Extension/SwiftLensXcodeExtension/Info.plist
+        CODE_SIGN_ENTITLEMENTS: Extension/SwiftLensXcodeExtension/SwiftLensXcodeExtension.entitlements
+        ENABLE_APP_SANDBOX: YES
+    dependencies:
+      - package: SwiftLens
+        product: SwiftLensSandbox
+      - sdk: XcodeKit.framework
+      - sdk: Cocoa.framework

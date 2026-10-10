@@ -1,0 +1,96 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "claude/**"]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    name: Linux (Swift ${{ matrix.swift }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        swift: ["6.1", "6.2"]
+    container: swift:${{ matrix.swift }}-noble
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: swift build --build-tests
+      - name: Test
+        run: swift test --skip-build
+      - name: CLI smoke test
+        run: |
+          swift build --product SwiftLensDemoMacros
+          BIN=$(swift build --show-bin-path)
+          "$BIN/swiftlens" doctor
+          "$BIN/swiftlens" expand Examples/DemoMacros/Usage.swift \
+            --plugin "$BIN/SwiftLensDemoMacros#SwiftLensDemoMacros" \
+            --decls Examples/DemoMacros/Declarations.swift --format diff || test $? -eq 1
+          printf 'import Observation\n@Observable final class C { var x = 0 }\n' > /tmp/obs.swift
+          "$BIN/swiftlens" expand /tmp/obs.swift --verify --format expansions
+          "$BIN/swiftlens" tree Examples/Render/ProfileCard.swift --depth 3
+          "$BIN/swiftlens" render Examples/Render/ProfileCard.swift --dry-run > /dev/null
+
+  macos:
+    name: macOS (build, test, render)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: |
+          sudo xcode-select -s "$(ls -d /Applications/Xcode_16*.app | sort -V | tail -1)" || true
+          xcodebuild -version
+          swift --version
+      - name: Build everything (CLI, app, UI)
+        run: swift build --build-tests
+      - name: Test
+        run: swift test --skip-build
+      - name: Render smoke test
+        run: |
+          BIN=$(swift build --show-bin-path)
+          "$BIN/swiftlens" doctor
+          "$BIN/swiftlens" render Examples/Render/ProfileCard.swift --appearance light dark --out renders
+          ls -la renders
+          test -s renders/preview-0-light.png
+          test -s renders/preview-1-dark.png
+      - name: Crash isolation smoke test
+        run: |
+          BIN=$(swift build --show-bin-path)
+          printf 'import SwiftUI\n#Preview { let a: [Int] = []; Text("\\(a[1])") }\n' > crash.swift
+          if "$BIN/swiftlens" render crash.swift --out crash-renders 2> crash.log; then
+            echo "expected failure"; exit 1
+          fi
+          cat crash.log
+          grep -qi "crashed\|exited\|Index out of range" crash.log
+      - name: Macro expansion with Apple macros
+        run: |
+          BIN=$(swift build --show-bin-path)
+          cat > model.swift <<'SWIFT'
+          import SwiftUI
+          import Observation
+          @Observable final class Model { var count = 0 }
+          #Preview { Text("Hi") }
+          SWIFT
+          "$BIN/swiftlens" expand model.swift --format expansions
+          "$BIN/swiftlens" expand model.swift --verify
+      - name: Bundle app
+        run: scripts/build-app.sh
+      - name: Xcode project (app + Source Editor Extension)
+        run: |
+          brew install xcodegen
+          xcodegen
+          xcodebuild -project SwiftLens.xcodeproj -scheme SwiftLens -configuration Debug \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY="" build | tail -30
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: renders
+          path: |
+            renders
+            crash.log
