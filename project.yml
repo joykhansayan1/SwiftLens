@@ -24,8 +24,6 @@ targets:
     platform: macOS
     sources:
       - path: Sources/SwiftLensApp
-    info:
-      path: App/Info.plist
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.swiftlens.app

@@ -83,10 +83,16 @@ jobs:
         run: scripts/build-app.sh
       - name: Xcode project (app + Source Editor Extension)
         run: |
+          set -o pipefail
           brew install xcodegen
           xcodegen
+          git diff --exit-code App/Info.plist   # XcodeGen must not rewrite our Info.plist
           xcodebuild -project SwiftLens.xcodeproj -scheme SwiftLens -configuration Debug \
             CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY="" build | tail -30
+          APP=$(find ~/Library/Developer/Xcode/DerivedData -path "*Debug/SwiftLens.app" -maxdepth 6 | head -1)
+          /usr/libexec/PlistBuddy -c "Print :LSUIElement" "$APP/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c "Print :CFBundleURLTypes:0:CFBundleURLSchemes:0" "$APP/Contents/Info.plist" | grep -q swiftlens
+          test -d "$APP/Contents/PlugIns/SwiftLensXcodeExtension.appex"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
