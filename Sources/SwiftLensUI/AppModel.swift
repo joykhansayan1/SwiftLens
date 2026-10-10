@@ -162,7 +162,7 @@ public final class AppModel: ObservableObject {
         }
     }
 
-    public var openMainWindow: (() -> Void)?
+    public var openMainWindow: (@MainActor () -> Void)?
 
     let workQueue = DispatchQueue(label: "dev.swiftlens.work", qos: .userInitiated)
     private let renderQueue = DispatchQueue(label: "dev.swiftlens.render", qos: .userInitiated)
@@ -216,7 +216,7 @@ public final class AppModel: ObservableObject {
     /// `swiftlens://open?mode=macros&code=<base64url>` or `swiftlens://open?mode=render&file=/path/File.swift`
     public func handle(url: URL) {
         guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return }
-        let items = Dictionary(uniqueKeysWithValues: (components.queryItems ?? []).map { ($0.name, $0.value ?? "") })
+        let items = Dictionary((components.queryItems ?? []).map { ($0.name, $0.value ?? "") }, uniquingKeysWith: { first, _ in first })
         if let raw = items["mode"], let requested = LensMode(rawValue: raw) { mode = requested }
         if let path = items["file"], !path.isEmpty {
             load(file: URL(fileURLWithPath: path))

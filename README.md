@@ -182,7 +182,7 @@ local processes. (Macro Lab's first build fetches swift-syntax through SwiftPM u
 
 ## Development
 ```bash
-swift build && swift test                       # 50+ tests; macro tests drive real plugin processes
+swift build && swift test                       # 40+ tests; macro tests drive real plugin processes
 SWIFTLENS_SLOW_TESTS=1 swift test --filter MacroLabTests   # builds a real plugin package
 ```
 CI runs on Linux (Swift 6.1/6.2) and macOS (build, tests, real renders, crash-isolation check, Xcode project).

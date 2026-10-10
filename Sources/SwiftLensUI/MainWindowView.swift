@@ -1,13 +1,14 @@
 #if os(macOS)
 import SwiftLensCore
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct MainWindowView: View {
     @ObservedObject var model: AppModel
 
     var body: some View {
         NavigationSplitView {
-            List(LensMode.allCases, selection: Binding(get: { model.mode }, set: { if let mode = $0 { model.mode = mode } })) { mode in
+            List(LensMode.allCases, selection: Binding<LensMode?>(get: { model.mode }, set: { if let mode = $0 { model.mode = mode } })) { mode in
                 Label(mode.title, systemImage: mode.systemImage).tag(mode)
             }
             .navigationSplitViewColumnWidth(min: 150, ideal: 170)
