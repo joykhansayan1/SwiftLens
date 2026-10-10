@@ -62,7 +62,7 @@ let package = Package(
         ),
         .target(
             name: "SwiftLensRenderer",
-            dependencies: ["SwiftLensSandbox"]
+            dependencies: ["SwiftLensCore", "SwiftLensSandbox"]
         ),
         .target(
             name: "SwiftLensUI",

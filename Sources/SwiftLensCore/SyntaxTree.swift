@@ -249,7 +249,9 @@ public struct SyntaxAccessPath: Hashable, Sendable {
             .replacingOccurrences(of: "SwiftSyntax.", with: "")
         let optional = valueType.hasPrefix("Optional<")
         let base = optional ? String(valueType.dropFirst("Optional<".count).dropLast()) : valueType
-        if optional { copy.isOptional = true }
+        // Optional chaining flattens: after `a?.b`, `.c` is applied to `b` itself, so only the most recent
+        // component's optionality decides between `.` and `?.`.
+        copy.isOptional = optional
         copy.appendCastIfNeeded(declaredType: base, node: node)
         return copy
     }

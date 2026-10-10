@@ -79,7 +79,10 @@ public enum MacroUsageScanner {
         }
 
         override func visit(_ node: MacroExpansionExprSyntax) -> SyntaxVisitorContinueKind {
-            record(node, kind: .freestandingExpression)
+            // A `#macro` that forms a whole statement (e.g. a top-level `#Preview { }`) is parsed as an expression
+            // but may well be a declaration macro.
+            let statementLevel = node.parent?.is(CodeBlockItemSyntax.self) ?? false
+            record(node, kind: statementLevel ? .freestandingDeclaration : .freestandingExpression)
             return .visitChildren
         }
 
